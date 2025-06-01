@@ -1,0 +1,14 @@
+# Core graph analysis dependencies
+watchdog>=3.0.0
+networkx>=3.0
+psutil>=5.9.0
+
+# Python code analysis - using specific working version
+pyan3==1.1.1
+
+# Additional utilities  
+aiofiles>=23.0.0
+
+# Development tools (optional)
+# prospector>=1.17.0  # Comprehensive Python analysis
+# vulture>=2.14       # Dead code detection

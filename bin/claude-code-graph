@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+
+// Alias for ccg command
+import('./ccg.js');

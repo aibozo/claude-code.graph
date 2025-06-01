@@ -1,0 +1,92 @@
+# Claude Code Graph Configuration
+# This file configures how claude-code-graph integrates with Claude Code
+
+hooks:
+  # Run before indexing starts
+  pre_index:
+    - "./tools/codegraph.sh"      # Build initial graph if missing
+    
+  # Run after applying changes
+  post_apply:
+    - "pkill -USR1 -f codegraphd"  # Signal daemon to update graph
+
+index:
+  # Files always included in context (pinned files)
+  always_include:
+    - "docs/ARCH_GRAPH.md"        # Human-readable architecture summary
+    - ".graph/ts.json"            # Tree-sitter graph data
+    - ".graph/py.dot"             # Python call graph
+    - ".graph/js.json"            # JavaScript module graph
+    - ".graph/metrics.json"       # Performance metrics
+    
+  # Files to exclude from indexing
+  exclude:
+    - ".graph/cache/"
+    - "node_modules/"
+    - "dist/"
+    - "coverage/"
+    - "*.log"
+
+# Graph-specific settings
+graph:
+  # Enable graph-enhanced tool selection
+  enabled: true
+  
+  # Maximum relationship depth for queries
+  max_depth: 3
+  
+  # Types of relationships to track
+  relationship_types:
+    - "imports"
+    - "calls" 
+    - "inheritance"
+    - "composition"
+    - "dependencies"
+  
+  # Performance settings
+  performance:
+    # Maximum files to analyze in a single batch
+    batch_size: 100
+    
+    # Cache timeout in seconds
+    cache_timeout: 300
+    
+    # Enable incremental updates
+    incremental: true
+  
+  # Language-specific settings
+  languages:
+    javascript:
+      enabled: true
+      analyzer: "madge"
+      extensions: [".js", ".jsx", ".mjs"]
+    
+    typescript:
+      enabled: true  
+      analyzer: "madge"
+      extensions: [".ts", ".tsx"]
+    
+    python:
+      enabled: true
+      analyzer: "pyan3"
+      extensions: [".py"]
+    
+    cpp:
+      enabled: false  # Requires clangd
+      analyzer: "clangd"
+      extensions: [".c", ".cpp", ".h", ".hpp"]
+
+# Tool integration settings
+tools:
+  # Prefer graph-aware searches when available
+  prefer_graph_search: true
+  
+  # Fall back to traditional tools when graph unavailable
+  graceful_degradation: true
+  
+  # Tool selection priorities (higher = preferred)
+  priorities:
+    graph_search: 100
+    targeted_read: 90
+    grep: 50
+    broad_search: 10

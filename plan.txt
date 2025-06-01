@@ -1,0 +1,627 @@
+# Claude Code Graph - Enhanced Implementation Plan
+
+## Overview
+Transform Claude Code into claude-code-graph: a powerful code analysis tool with live structural graphs that help navigate large codebases efficiently.
+
+---
+
+## 0 · Prerequisites & Environment Setup
+
+### Directory Structure
+```
+repo-root/
+ ├─ .claude/              # Claude-Code project settings
+ │   └─ code.yml
+ ├─ .graph/               # machine-generated – do NOT commit
+ │   ├─ ts.json           # Tree-sitter graph data
+ │   ├─ py.dot            # Python call graph
+ │   ├─ cache/            # Graph cache files
+ │   └─ metrics.json      # Performance metrics
+ ├─ tools/
+ │   ├─ codegraph.sh      # one-shot builder
+ │   ├─ codegraphd.py     # incremental daemon
+ │   └─ graph-query.js    # Graph querying utilities
+ ├─ src/
+ │   ├─ graph/            # Graph integration code
+ │   │   ├─ GraphService.js
+ │   │   ├─ GraphTool.js
+ │   │   └─ GraphAnalyzer.js
+ │   └─ tools/            # Enhanced tools with graph support
+ ├─ tests/
+ │   ├─ graph/            # Graph-specific tests
+ │   ├─ integration/      # End-to-end tests
+ │   └─ fixtures/         # Test repositories
+ ├─ docs/
+ │   ├─ ARCH_GRAPH.md     # Auto-generated architecture summary
+ │   ├─ API.md            # Graph API documentation
+ │   └─ USER_GUIDE.md     # User documentation
+ └─ package.json          # claude-code-graph package definition
+```
+
+### Package Dependencies
+```bash
+# System dependencies
+brew install clangd graphviz watchman ripgrep
+npm install -g tree-sitter tree-sitter-graph
+pip3 install pyan3 watchdog networkx
+
+# Node.js dependencies (for claude-code-graph)
+npm install --save graphlib d3-hierarchy lodash.debounce
+npm install --save-dev jest @types/jest supertest
+```
+
+---
+
+## 1 · Core Graph Infrastructure
+
+### 1.1 Tree-sitter Omni-graph (Multi-language)
+```bash
+# Initialize with language grammars
+tsg init --languages javascript,typescript,python,rust,go,java
+tsg query $PWD --stdout --format json > .graph/ts.json
+```
+
+**Enhanced features:**
+- Multi-language support
+- Incremental parsing with cache invalidation
+- Symbol resolution across files
+- Import/export dependency tracking
+
+### 1.2 Language-specific analyzers
+
+#### Python Call Graph
+```bash
+pyan3 $(git ls-files '*.py') --dot --colored --grouped > .graph/py.dot
+```
+
+#### JavaScript/TypeScript Module Graph
+```bash
+madge --format json --image .graph/js-modules.png src/ > .graph/js.json
+```
+
+#### Cross-language API boundaries
+```bash
+# Custom analyzer for FFI, REST APIs, etc.
+./tools/api-analyzer.py --output .graph/apis.json
+```
+
+### 1.3 Symbol Index with clangd
+```bash
+clangd --background-index --compile-commands-dir=build \
+       --log=verbose --pch-storage=memory &
+```
+
+**Features:**
+- Background indexing
+- Symbol cross-references
+- Type information
+- Declaration/definition links
+
+---
+
+## 2 · Real-time Graph Updates
+
+### 2.1 Enhanced Watcher Daemon
+```python
+#!/usr/bin/env python3
+"""
+Enhanced codegraphd.py with error handling, metrics, and performance optimization
+"""
+import asyncio
+import json
+import logging
+import signal
+import time
+from pathlib import Path
+from typing import Dict, Set
+from watchdog.observers import Observer
+from watchdog.events import PatternMatchingEventHandler
+import aiofiles
+import psutil
+
+class GraphBuilder:
+    def __init__(self, root_path: Path):
+        self.root = root_path
+        self.graph_dir = root_path / ".graph"
+        self.metrics = {"updates": 0, "errors": 0, "avg_time": 0}
+        self.cache = {}
+        
+    async def rebuild_incremental(self, changed_files: Set[Path]):
+        """Incrementally rebuild only affected parts of the graph"""
+        start_time = time.time()
+        try:
+            # Determine which analyzers need to run
+            analyzers = self.get_affected_analyzers(changed_files)
+            
+            # Run analyzers in parallel
+            tasks = [self.run_analyzer(analyzer, changed_files) 
+                    for analyzer in analyzers]
+            await asyncio.gather(*tasks)
+            
+            # Update metrics
+            duration = time.time() - start_time
+            self.update_metrics(duration, success=True)
+            
+        except Exception as e:
+            logging.error(f"Graph rebuild failed: {e}")
+            self.update_metrics(time.time() - start_time, success=False)
+            
+    def get_affected_analyzers(self, files: Set[Path]) -> List[str]:
+        """Determine which analyzers need to run based on changed files"""
+        analyzers = []
+        extensions = {f.suffix for f in files}
+        
+        if any(ext in ['.py'] for ext in extensions):
+            analyzers.append('python')
+        if any(ext in ['.js', '.ts', '.jsx', '.tsx'] for ext in extensions):
+            analyzers.append('javascript')
+        if any(ext in ['.c', '.cpp', '.h', '.hpp'] for ext in extensions):
+            analyzers.append('cpp')
+            
+        return analyzers
+```
+
+### 2.2 Performance Monitoring
+```python
+class GraphMetrics:
+    def __init__(self):
+        self.start_time = time.time()
+        self.update_count = 0
+        self.error_count = 0
+        self.response_times = []
+        
+    def log_update(self, duration: float, file_count: int, success: bool):
+        self.update_count += 1
+        if not success:
+            self.error_count += 1
+        self.response_times.append(duration)
+        
+        # Log to metrics.json
+        metrics = {
+            "uptime": time.time() - self.start_time,
+            "updates": self.update_count,
+            "errors": self.error_count,
+            "avg_response_time": sum(self.response_times) / len(self.response_times),
+            "memory_usage": psutil.Process().memory_info().rss / 1024 / 1024
+        }
+        
+        with open(".graph/metrics.json", "w") as f:
+            json.dump(metrics, f, indent=2)
+```
+
+---
+
+## 3 · Claude Code Core Integration
+
+### 3.1 New Graph Tool
+```javascript
+// src/graph/GraphTool.js
+class GraphTool {
+    constructor(graphService) {
+        this.graphService = graphService;
+    }
+    
+    async findRelatedFiles(targetFile, options = {}) {
+        const graph = await this.graphService.getGraph();
+        const related = graph.getConnectedNodes(targetFile, {
+            maxDepth: options.depth || 3,
+            relationTypes: options.types || ['imports', 'calls', 'inheritance']
+        });
+        
+        return related.map(node => ({
+            path: node.path,
+            relationship: node.relationship,
+            confidence: node.confidence
+        }));
+    }
+    
+    async suggestRelevantFiles(task, codeContext) {
+        // Use graph structure to suggest files relevant to the task
+        const keywords = this.extractKeywords(task);
+        const candidates = await this.graphService.searchBySymbols(keywords);
+        
+        // Rank by graph centrality and semantic relevance
+        return this.rankFiles(candidates, codeContext);
+    }
+    
+    async getArchitectureOverview() {
+        const graph = await this.graphService.getGraph();
+        return {
+            modules: graph.getModules(),
+            hotPaths: graph.getHotPaths(),
+            cycles: graph.detectCycles(),
+            metrics: graph.getMetrics()
+        };
+    }
+}
+```
+
+### 3.2 Enhanced Tool Selection
+```javascript
+// src/core/ToolSelector.js - Enhanced with graph awareness
+class GraphAwareToolSelector {
+    constructor(graphTool) {
+        this.graphTool = graphTool;
+    }
+    
+    async selectBestTool(query, context) {
+        // Check if graph can help narrow search space
+        if (this.isStructuralQuery(query)) {
+            const related = await this.graphTool.findRelatedFiles(
+                context.currentFile, 
+                { depth: 2 }
+            );
+            
+            // Prefer targeted search over broad grep
+            if (related.length < 20) {
+                return { tool: 'Read', files: related.map(r => r.path) };
+            }
+        }
+        
+        // Fall back to original tool selection logic
+        return this.originalSelectTool(query, context);
+    }
+}
+```
+
+### 3.3 Graph-Enhanced Commands
+```javascript
+// New commands for claude-code-graph
+const graphCommands = {
+    '/graph-overview': async () => {
+        const overview = await graphTool.getArchitectureOverview();
+        return formatArchitectureOverview(overview);
+    },
+    
+    '/find-related': async (filename) => {
+        const related = await graphTool.findRelatedFiles(filename);
+        return formatRelatedFiles(related);
+    },
+    
+    '/hot-paths': async () => {
+        const paths = await graphTool.getHotPaths();
+        return formatHotPaths(paths);
+    },
+    
+    '/cycles': async () => {
+        const cycles = await graphTool.detectCycles();
+        return formatCycles(cycles);
+    }
+};
+```
+
+---
+
+## 4 · Testing Strategy
+
+### 4.1 Unit Tests
+```javascript
+// tests/graph/GraphService.test.js
+describe('GraphService', () => {
+    let graphService;
+    let testRepo;
+    
+    beforeEach(async () => {
+        testRepo = await setupTestRepository();
+        graphService = new GraphService(testRepo.path);
+    });
+    
+    describe('graph generation', () => {
+        test('should generate graph for simple JS project', async () => {
+            const graph = await graphService.buildGraph();
+            expect(graph.nodes).toHaveLength(5);
+            expect(graph.edges).toHaveLength(4);
+        });
+        
+        test('should handle missing dependencies gracefully', async () => {
+            await graphService.buildGraph({ strict: false });
+            const errors = graphService.getErrors();
+            expect(errors).toEqual([]);
+        });
+    });
+    
+    describe('incremental updates', () => {
+        test('should update graph when file changes', async () => {
+            await testRepo.writeFile('src/new.js', 'export const x = 1;');
+            const updatedGraph = await graphService.updateGraph(['src/new.js']);
+            expect(updatedGraph.hasNode('src/new.js')).toBe(true);
+        });
+    });
+});
+```
+
+### 4.2 Integration Tests
+```javascript
+// tests/integration/graph-workflows.test.js
+describe('Graph-Enhanced Workflows', () => {
+    test('should suggest relevant files for refactoring task', async () => {
+        const claude = new ClaudeCodeGraph(testRepo);
+        const suggestions = await claude.handleQuery(
+            'refactor the authentication system'
+        );
+        
+        expect(suggestions.files).toContain('src/auth/login.js');
+        expect(suggestions.files).toContain('src/auth/middleware.js');
+    });
+    
+    test('should use graph to optimize grep searches', async () => {
+        const result = await claude.searchWithContext('handleLogin', {
+            useGraph: true
+        });
+        
+        // Should search auth-related files first
+        expect(result.searchOrder[0]).toMatch(/auth/);
+    });
+});
+```
+
+### 4.3 Performance Tests
+```javascript
+// tests/performance/graph-performance.test.js
+describe('Graph Performance', () => {
+    test('should build graph for large repo in under 30s', async () => {
+        const largeRepo = await setupLargeTestRepo(); // 10k files
+        const startTime = Date.now();
+        
+        await graphService.buildGraph();
+        
+        const duration = Date.now() - startTime;
+        expect(duration).toBeLessThan(30000);
+    });
+    
+    test('should handle incremental updates in under 100ms', async () => {
+        await graphService.buildGraph();
+        const startTime = Date.now();
+        
+        await graphService.updateGraph(['src/small-change.js']);
+        
+        const duration = Date.now() - startTime;
+        expect(duration).toBeLessThan(100);
+    });
+});
+```
+
+### 4.4 Test Fixtures
+```
+tests/fixtures/
+├─ simple-js/           # Basic JS project
+├─ complex-ts/          # Complex TypeScript project
+├─ multi-lang/          # Mixed language project
+├─ large-repo/          # Performance test repo
+└─ broken-deps/         # Error handling scenarios
+```
+
+---
+
+## 5 · NPM Package Structure
+
+### 5.1 Package Configuration
+```json
+{
+  "name": "claude-code-graph",
+  "version": "1.0.0",
+  "description": "Claude Code with live structural graphs for large codebases",
+  "main": "dist/index.js",
+  "bin": {
+    "claude-code-graph": "bin/claude-code-graph",
+    "ccg": "bin/ccg"
+  },
+  "scripts": {
+    "build": "tsc && npm run build:tools",
+    "build:tools": "chmod +x tools/* && cp tools/* dist/tools/",
+    "test": "jest",
+    "test:integration": "jest tests/integration",
+    "test:performance": "jest tests/performance --timeout=60000",
+    "start": "node dist/index.js",
+    "graph:daemon": "python3 tools/codegraphd.py",
+    "graph:build": "./tools/codegraph.sh"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-code": "^1.0.0",
+    "graphlib": "^2.1.8",
+    "d3-hierarchy": "^3.1.2",
+    "lodash.debounce": "^4.0.8",
+    "chokidar": "^3.5.3"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "@types/jest": "^29.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "os": ["linux", "darwin"],
+  "keywords": ["claude", "code-analysis", "graph", "ast", "refactoring"],
+  "repository": "https://github.com/aibozo/claude-code.graph"
+}
+```
+
+### 5.2 Installation & Setup
+```bash
+# Global installation
+npm install -g claude-code-graph
+
+# Auto-setup in project
+ccg init
+
+# Verify installation
+ccg --version
+ccg doctor  # Check dependencies and setup
+```
+
+### 5.3 CLI Wrapper
+```javascript
+// bin/claude-code-graph
+#!/usr/bin/env node
+const { ClaudeCodeGraph } = require('../dist');
+const path = require('path');
+
+async function main() {
+    const cwd = process.cwd();
+    const claude = new ClaudeCodeGraph(cwd);
+    
+    // Check if graph tools are available
+    const healthCheck = await claude.checkGraphHealth();
+    if (!healthCheck.healthy) {
+        console.warn('Graph tools not fully available:', healthCheck.issues);
+        console.log('Run `ccg doctor` for setup instructions');
+    }
+    
+    // Start with graph integration enabled
+    await claude.start({ enableGraph: healthCheck.healthy });
+}
+
+main().catch(console.error);
+```
+
+---
+
+## 6 · Error Handling & Edge Cases
+
+### 6.1 Dependency Validation
+```python
+# tools/health-check.py
+def check_dependencies():
+    required = ['clangd', 'tree-sitter', 'pyan3', 'graphviz']
+    missing = []
+    
+    for tool in required:
+        if not shutil.which(tool):
+            missing.append(tool)
+    
+    if missing:
+        print(f"Missing dependencies: {', '.join(missing)}")
+        print("Run: npm run install:deps")
+        return False
+    
+    return True
+```
+
+### 6.2 Graceful Degradation
+```javascript
+class GraphService {
+    async getGraph() {
+        try {
+            return await this.loadGraph();
+        } catch (error) {
+            console.warn('Graph unavailable, falling back to basic mode');
+            return new EmptyGraph();
+        }
+    }
+}
+```
+
+### 6.3 Recovery Mechanisms
+```python
+# Auto-recovery for corrupted graphs
+def recover_graph():
+    if not validate_graph('.graph/ts.json'):
+        logging.info('Corrupted graph detected, rebuilding...')
+        subprocess.run(['./tools/codegraph.sh'], check=True)
+```
+
+---
+
+## 7 · User Experience & Documentation
+
+### 7.1 Interactive Setup
+```bash
+ccg init --interactive
+# Guides user through:
+# - Dependency installation
+# - Project language detection
+# - Graph configuration
+# - Performance tuning
+```
+
+### 7.2 Status Dashboard
+```javascript
+// Built-in status command
+ccg status
+/*
+Graph Status: ✅ Healthy
+Last Update: 2s ago
+Files Indexed: 1,247
+Graph Nodes: 2,381
+Graph Edges: 5,632
+Memory Usage: 45MB
+Daemon Status: Running (PID 12345)
+*/
+```
+
+### 7.3 Help System
+```javascript
+// Enhanced help with graph commands
+const graphHelp = `
+Graph Commands:
+  /graph-overview     Show architecture overview
+  /find-related FILE  Find files related to FILE
+  /hot-paths         Show most-used code paths
+  /cycles            Detect circular dependencies
+  /graph-stats       Show graph statistics
+  
+Graph Options:
+  --graph-depth N    Set relationship depth (default: 3)
+  --graph-types T    Filter relationship types
+  --graph-refresh    Force graph rebuild
+`;
+```
+
+---
+
+## 8 · Timeline & Milestones
+
+### Phase 1: Core Infrastructure (Week 1)
+- [ ] Set up enhanced directory structure
+- [ ] Implement GraphService with basic functionality
+- [ ] Create codegraphd.py with error handling
+- [ ] Build unit test foundation
+- [ ] Create test fixtures
+
+### Phase 2: Claude Integration (Week 2)
+- [ ] Implement GraphTool for Claude Code
+- [ ] Enhance tool selection with graph awareness
+- [ ] Add graph-specific commands
+- [ ] Integration tests for core workflows
+- [ ] Performance optimization
+
+### Phase 3: Package & Distribution (Week 3)
+- [ ] NPM package structure
+- [ ] CLI wrapper and commands
+- [ ] Installation automation
+- [ ] User documentation
+- [ ] Performance testing
+
+### Phase 4: Polish & Release (Week 4)
+- [ ] Error handling and edge cases
+- [ ] User experience improvements
+- [ ] Comprehensive documentation
+- [ ] Release preparation
+- [ ] Community feedback integration
+
+---
+
+## 9 · Success Metrics
+
+### Performance Targets
+- Graph build: < 30s for 500k LoC
+- Incremental updates: < 100ms
+- Memory usage: < 100MB for typical projects
+- Cold start: < 5s
+
+### Quality Targets
+- Test coverage: > 90%
+- Zero critical vulnerabilities
+- Cross-platform compatibility (Linux, macOS)
+- Graceful degradation when tools unavailable
+
+### User Experience
+- One-command setup (`ccg init`)
+- Clear error messages and recovery steps
+- Responsive graph updates during development
+- Intuitive graph exploration commands
+
+---
+
+This enhanced plan provides a complete roadmap for building claude-code-graph as a robust, testable, and distributable package that brings powerful code graph capabilities to the Claude Code ecosystem.

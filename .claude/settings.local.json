@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir:*)",
+      "Bash(touch:*)",
+      "Bash(npm install)",
+      "Bash(pip3 install:*)",
+      "Bash(npm install:*)",
+      "Bash(chmod:*)",
+      "Bash(find:*)",
+      "Bash(pip3:*)",
+      "Bash(python3 -m pip install:*)",
+      "Bash(~/.local/bin/pip3 install:*)",
+      "Bash(python3.10:*)",
+      "Bash(./tools/codegraph.sh:*)",
+      "Bash(tree-sitter:*)",
+      "Bash(python3.12:*)",
+      "Bash(export PATH=\"$HOME/.local/bin:$PATH\")",
+      "Bash(source:*)",
+      "Bash(python -m pyan:*)",
+      "Bash(node:*)",
+      "Bash(npm test)",
+      "Bash(rm:*)"
+    ],
+    "deny": []
+  }
+}

@@ -1,0 +1,366 @@
+#!/usr/bin/env node
+
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import { existsSync } from 'fs';
+import { spawn } from 'child_process';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+const commands = {
+  'init': initProject,
+  'doctor': checkHealth,
+  'status': showStatus,
+  'start': startClaude,
+  'daemon': manageDaemon,
+  'build': buildGraph,
+  '--version': showVersion,
+  '--help': showHelp,
+  'help': showHelp
+};
+
+async function main() {
+  const [,, command, ...args] = process.argv;
+  
+  if (!command || command === 'help' || command === '--help') {
+    showHelp();
+    return;
+  }
+  
+  if (commands[command]) {
+    try {
+      await commands[command](args);
+    } catch (error) {
+      console.error(`❌ Error executing '${command}':`, error.message);
+      process.exit(1);
+    }
+  } else {
+    console.error(`❌ Unknown command: ${command}`);
+    console.log('Run `ccg help` for available commands');
+    process.exit(1);
+  }
+}
+
+async function initProject(args) {
+  const projectRoot = process.cwd();
+  console.log('🚀 Initializing Claude Code Graph...\n');
+  
+  // Check if already initialized
+  if (existsSync(join(projectRoot, '.graph'))) {
+    console.log('✅ Project already initialized');
+    return;
+  }
+  
+  // Create .graph directory
+  await import('fs/promises').then(fs => fs.mkdir(join(projectRoot, '.graph'), { recursive: true }));
+  await import('fs/promises').then(fs => fs.mkdir(join(projectRoot, '.graph', 'cache'), { recursive: true }));
+  
+  // Create .gitignore entry
+  const gitignorePath = join(projectRoot, '.gitignore');
+  const gitignoreEntry = '\n# Claude Code Graph\n.graph/\n';
+  
+  if (existsSync(gitignorePath)) {
+    const content = await import('fs/promises').then(fs => fs.readFile(gitignorePath, 'utf8'));
+    if (!content.includes('.graph/')) {
+      await import('fs/promises').then(fs => fs.appendFile(gitignorePath, gitignoreEntry));
+    }
+  } else {
+    await import('fs/promises').then(fs => fs.writeFile(gitignorePath, gitignoreEntry));
+  }
+  
+  console.log('✅ Created .graph directory');
+  console.log('✅ Updated .gitignore');
+  
+  // Run initial health check
+  console.log('\n🏥 Running health check...');
+  await checkHealth([]);
+  
+  // Build initial graph
+  console.log('\n📊 Building initial graph...');
+  await buildGraph([]);
+  
+  console.log('\n🎉 Initialization complete!');
+  console.log('💡 Run `ccg start` to launch Claude Code with graph intelligence');
+}
+
+async function checkHealth(args) {
+  console.log('🏥 Claude Code Graph Health Check\n');
+  
+  const checks = [
+    { name: 'Node.js', cmd: 'node', args: ['--version'], required: true },
+    { name: 'Python3', cmd: 'python3', args: ['--version'], required: true },
+    { name: 'tree-sitter', cmd: 'tree-sitter', args: ['--version'], required: false },
+    { name: 'madge', cmd: 'npx', args: ['madge', '--version'], required: true },
+    { name: 'pyan3', cmd: 'python3', args: ['-m', 'pyan', '--help'], required: false }
+  ];
+  
+  let allGood = true;
+  
+  for (const check of checks) {
+    try {
+      const result = await runCommand(check.cmd, check.args);
+      console.log(`✅ ${check.name}: Available`);
+    } catch (error) {
+      const status = check.required ? '❌' : '⚠️';
+      console.log(`${status} ${check.name}: ${check.required ? 'Missing' : 'Not available'}`);
+      if (check.required) allGood = false;
+    }
+  }
+  
+  // Check Python environment (prefer local venv, fall back to global)
+  if (existsSync('.venv/bin/activate')) {
+    console.log('✅ Python virtual environment: Found (local)');
+  } else {
+    try {
+      await runCommand('python3', ['-m', 'pyan', '--help']);
+      console.log('✅ Python dependencies: Available (global)');
+    } catch (error) {
+      console.log('⚠️ Python dependencies: pyan3 not available globally');
+    }
+  }
+  
+  // Check graph files
+  const graphDir = '.graph';
+  if (existsSync(graphDir)) {
+    const files = ['js.json', 'py.dot', 'ts.json', 'metrics.json'];
+    const existing = files.filter(f => existsSync(join(graphDir, f)));
+    console.log(`📊 Graph files: ${existing.length}/${files.length} present`);
+  } else {
+    console.log('📊 Graph files: Not initialized (run \`ccg init\`)');
+  }
+  
+  console.log(`\n${allGood ? '✅' : '❌'} Overall health: ${allGood ? 'Good' : 'Issues found'}`);
+  
+  if (!allGood) {
+    console.log('\n💡 Installation help:');
+    console.log('  npm install -g tree-sitter-cli');
+    console.log('  pip3 install pyan3 watchdog networkx');
+  }
+}
+
+async function showStatus(args) {
+  console.log('📊 Claude Code Graph Status\n');
+  
+  // Check daemon
+  const isRunning = await checkDaemonStatus();
+  console.log(`🤖 Daemon: ${isRunning ? '🟢 Running' : '🔴 Stopped'}`);
+  
+  // Check graph files
+  const graphFiles = ['js.json', 'py.dot', 'ts.json', 'metrics.json'];
+  const existing = graphFiles.filter(f => existsSync(join('.graph', f)));
+  console.log(`📊 Graph files: ${existing.length}/${graphFiles.length}`);
+  
+  // Show metrics if available
+  const metricsPath = '.graph/metrics.json';
+  if (existsSync(metricsPath)) {
+    try {
+      const metrics = JSON.parse(await import('fs/promises').then(fs => fs.readFile(metricsPath, 'utf8')));
+      console.log(`📈 Total files: ${metrics.total_files || 'Unknown'}`);
+      console.log(`⏰ Last updated: ${metrics.timestamp || 'Unknown'}`);
+      
+      if (metrics.by_language) {
+        console.log('📝 Languages:');
+        Object.entries(metrics.by_language).forEach(([lang, count]) => {
+          if (count > 0) console.log(`  - ${lang}: ${count} files`);
+        });
+      }
+    } catch (error) {
+      console.log('📈 Metrics: Unable to read');
+    }
+  }
+  
+  console.log('\n💡 Commands:');
+  console.log('  ccg start    - Launch Claude Code with graph intelligence');
+  console.log('  ccg daemon   - Manage graph daemon (start/stop/status)');
+  console.log('  ccg build    - Rebuild graphs manually');
+}
+
+async function startClaude(args) {
+  console.log('🚀 Starting Claude Code with Graph Intelligence...\n');
+  
+  // Check if claude-code is available
+  try {
+    await runCommand('claude-code', ['--version']);
+  } catch (error) {
+    console.error('❌ claude-code not found. Please install Claude Code first.');
+    process.exit(1);
+  }
+  
+  // Start daemon if not running
+  const isRunning = await checkDaemonStatus();
+  if (!isRunning) {
+    console.log('🤖 Starting graph daemon...');
+    await manageDaemon(['start']);
+  }
+  
+  // Launch Claude Code
+  console.log('🎯 Launching Claude Code...');
+  const child = spawn('claude-code', args, { 
+    stdio: 'inherit',
+    cwd: process.cwd()
+  });
+  
+  child.on('exit', (code) => {
+    process.exit(code);
+  });
+}
+
+async function manageDaemon(args) {
+  const [action] = args;
+  const rootPath = process.cwd();
+  
+  switch (action) {
+    case 'start':
+      console.log('🤖 Starting graph daemon...');
+      const venvPath = join(rootPath, '.venv', 'bin', 'activate');
+      const daemonPath = join(__dirname, '..', 'tools', 'codegraphd.py');
+      
+      if (existsSync(venvPath)) {
+        spawn('bash', ['-c', `source ${venvPath} && python ${daemonPath}`], { 
+          detached: true, 
+          stdio: 'ignore',
+          cwd: rootPath
+        }).unref();
+      } else {
+        spawn('python3', [daemonPath], { 
+          detached: true, 
+          stdio: 'ignore',
+          cwd: rootPath
+        }).unref();
+      }
+      
+      // Wait and check if started
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const isRunning = await checkDaemonStatus();
+      console.log(isRunning ? '✅ Daemon started' : '❌ Failed to start daemon');
+      break;
+      
+    case 'stop':
+      console.log('🛑 Stopping graph daemon...');
+      await stopDaemon();
+      break;
+      
+    case 'status':
+      const running = await checkDaemonStatus();
+      console.log(`🤖 Daemon: ${running ? '🟢 Running' : '🔴 Stopped'}`);
+      break;
+      
+    default:
+      console.log('Usage: ccg daemon <start|stop|status>');
+  }
+}
+
+async function buildGraph(args) {
+  console.log('📊 Building code graphs...\n');
+  
+  const buildScript = join(__dirname, '..', 'tools', 'codegraph.sh');
+  
+  if (!existsSync(buildScript)) {
+    console.error('❌ Build script not found');
+    process.exit(1);
+  }
+  
+  const child = spawn('bash', [buildScript], {
+    stdio: 'inherit',
+    cwd: process.cwd()
+  });
+  
+  return new Promise((resolve, reject) => {
+    child.on('close', (code) => {
+      if (code === 0) {
+        console.log('\n✅ Graph build complete');
+        resolve();
+      } else {
+        reject(new Error(`Build failed with code ${code}`));
+      }
+    });
+  });
+}
+
+async function checkDaemonStatus() {
+  const lockFile = '.graph/daemon.lock';
+  if (!existsSync(lockFile)) return false;
+  
+  try {
+    const pid = parseInt(await import('fs/promises').then(fs => fs.readFile(lockFile, 'utf8')));
+    process.kill(pid, 0); // Check if process exists
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+async function stopDaemon() {
+  const lockFile = '.graph/daemon.lock';
+  if (!existsSync(lockFile)) {
+    console.log('🔴 Daemon not running');
+    return;
+  }
+  
+  try {
+    const pid = parseInt(await import('fs/promises').then(fs => fs.readFile(lockFile, 'utf8')));
+    process.kill(pid, 'SIGTERM');
+    console.log('✅ Daemon stopped');
+  } catch (error) {
+    console.log('⚠️ Unable to stop daemon:', error.message);
+  }
+}
+
+function runCommand(command, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: 'pipe' });
+    let output = '';
+    
+    child.stdout?.on('data', (data) => output += data);
+    child.stderr?.on('data', (data) => output += data);
+    
+    child.on('close', (code) => {
+      if (code === 0) resolve(output);
+      else reject(new Error(`Command failed: ${command} ${args.join(' ')}`));
+    });
+    
+    child.on('error', reject);
+  });
+}
+
+async function showVersion() {
+  const packagePath = join(__dirname, '..', 'package.json');
+  if (existsSync(packagePath)) {
+    const content = await import('fs/promises').then(fs => fs.readFile(packagePath, 'utf8'));
+    const pkg = JSON.parse(content);
+    console.log(`claude-code-graph v${pkg.version}`);
+  } else {
+    console.log('claude-code-graph (development)');
+  }
+}
+
+function showHelp() {
+  console.log(`
+🧠 Claude Code Graph - AI-powered code analysis with structural graphs
+
+Usage: ccg <command> [options]
+
+Commands:
+  init                Initialize graph system in current project
+  doctor              Check system health and dependencies  
+  status              Show current graph and daemon status
+  start [args]        Launch Claude Code with graph intelligence
+  daemon <action>     Manage graph daemon (start/stop/status)
+  build               Build/rebuild all graphs manually
+  
+  --version           Show version information
+  --help              Show this help message
+
+Examples:
+  ccg init                    # Set up graphs in new project
+  ccg doctor                  # Check if all dependencies installed
+  ccg start                   # Launch Claude Code with graphs
+  ccg daemon start            # Start live graph updates
+  ccg build                   # Manually rebuild graphs
+
+For more info: https://github.com/aibozo/claude-code.graph
+`);
+}
+
+main().catch(console.error);
