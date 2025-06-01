@@ -1,23 +1,22 @@
 {
   "name": "claude-code-graph",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Claude Code with live structural graphs for large codebases",
-  "main": "dist/index.js",
+  "main": "src/index.js",
   "type": "module",
   "bin": {
     "claude-code-graph": "bin/claude-code-graph",
     "ccg": "bin/ccg"
   },
   "scripts": {
-    "build": "tsc && npm run build:tools",
-    "build:tools": "chmod +x tools/* && cp tools/* dist/tools/",
+    "build": "chmod +x tools/* && chmod +x bin/*",
     "dev": "tsc --watch",
     "test": "jest",
     "test:unit": "jest tests/graph tests/unit",
     "test:integration": "jest tests/integration",
     "test:performance": "jest tests/performance --timeout=60000",
     "test:watch": "jest --watch",
-    "start": "node dist/index.js",
+    "start": "node src/index.js",
     "postinstall": "./scripts/install-deps.sh",
     "graph:daemon": "source .venv/bin/activate && python tools/codegraphd.py",
     "graph:daemon:start": "npm run graph:daemon",
