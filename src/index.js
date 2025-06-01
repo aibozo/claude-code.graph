@@ -3,6 +3,7 @@ import { GraphTool } from './graph/GraphTool.js';
 import { GraphAwareToolSelector } from './graph/GraphAwareToolSelector.js';
 import { GraphCommands } from './graph/GraphCommands.js';
 import { TodoMonitor } from './graph/TodoMonitor.js';
+import { ToolInterceptor } from './graph/ToolInterceptor.js';
 
 /**
  * Claude Code Graph - Main entry point
@@ -16,6 +17,7 @@ export class ClaudeCodeGraph {
     this.toolSelector = new GraphAwareToolSelector(rootPath);
     this.commands = new GraphCommands(rootPath);
     this.todoMonitor = new TodoMonitor(rootPath);
+    this.toolInterceptor = new ToolInterceptor(rootPath);
     this.initialized = false;
   }
 
@@ -31,7 +33,8 @@ export class ClaudeCodeGraph {
         this.graphService.initialize(),
         this.graphTool.initialize(),
         this.toolSelector.initialize(),
-        this.commands.initialize()
+        this.commands.initialize(),
+        this.toolInterceptor.initialize()
       ]);
 
       // Check results
@@ -146,8 +149,29 @@ export class ClaudeCodeGraph {
         
         console.log('✅ Generated CLAUDE_GRAPH_CONTEXT.md');
       }
+
+      // Generate intelligence status file
+      await this.generateIntelligenceStatus();
+      
     } catch (error) {
       console.warn('⚠️ Failed to generate context files:', error.message);
+    }
+  }
+
+  /**
+   * Generate intelligence status file
+   */
+  async generateIntelligenceStatus() {
+    try {
+      const fs = await import('fs/promises');
+      const stats = this.toolInterceptor.getUsageStats();
+      
+      const intelligenceContent = this.formatIntelligenceStatus(stats);
+      await fs.writeFile('CLAUDE_GRAPH_INTELLIGENCE.md', intelligenceContent);
+      
+      console.log('🧠 Generated CLAUDE_GRAPH_INTELLIGENCE.md (transparent intelligence active)');
+    } catch (error) {
+      console.warn('⚠️ Failed to generate intelligence status:', error.message);
     }
   }
 
@@ -181,6 +205,60 @@ export class ClaudeCodeGraph {
     
     content += '## Usage\n\n';
     content += 'Instead of scanning thousands of files, use the cluster overview to understand the codebase architecture, then drill down to specific areas using the navigation commands.\n';
+    
+    return content;
+  }
+
+  /**
+   * Format intelligence status for Claude
+   */
+  formatIntelligenceStatus(stats) {
+    let content = '# Graph Intelligence Active 🧠\n\n';
+    content += '**Status**: Transparent graph intelligence is now active and enhancing your tools automatically.\n\n';
+    
+    content += '## Current Session Stats\n\n';
+    content += `- **Tool calls**: ${stats.toolCalls}\n`;
+    content += `- **Graph enhanced**: ${stats.graphEnhanced}\n`;
+    content += `- **Enhancement rate**: ${stats.enhancementRate}\n`;
+    content += `- **Last updated**: ${new Date().toLocaleTimeString()}\n\n`;
+    
+    if (stats.lastActivity && stats.lastActivity.length > 0) {
+      content += '## Recent Activity\n\n';
+      stats.lastActivity.forEach(activity => {
+        const time = new Date(activity.timestamp).toLocaleTimeString();
+        content += `- ${time}: ${activity.tool} - ${activity.prompt || activity.pattern || activity.filePath}\n`;
+      });
+      content += '\n';
+    }
+    
+    content += '## How It Works\n\n';
+    content += 'Graph intelligence now transparently enhances your normal Claude Code tools:\n\n';
+    content += '### 🔍 Enhanced Task Tool\n';
+    content += '- **Normal**: Task tool searches files randomly\n';
+    content += '- **Enhanced**: Graph guides search to most relevant files first\n';
+    content += '- **Bonus**: Suggests cluster navigation for large result sets\n\n';
+    
+    content += '### 🎯 Enhanced Grep Tool\n';
+    content += '- **Normal**: Searches files in filesystem order\n';
+    content += '- **Enhanced**: Prioritizes graph-relevant files\n';
+    content += '- **Bonus**: Highlights files likely to contain what you\'re looking for\n\n';
+    
+    content += '### 📖 Enhanced Read Tool\n';
+    content += '- **Normal**: Just shows file content\n';
+    content += '- **Enhanced**: Automatically suggests related files to explore\n';
+    content += '- **Bonus**: Shows relationships (imports, dependencies, etc.)\n\n';
+    
+    content += '## Intelligence Features\n\n';
+    content += '✨ **Invisible Operation**: No new commands to learn - your existing tools just got smarter\n';
+    content += '🎯 **Graph-Guided Ordering**: Results ordered by architectural relevance\n';
+    content += '🔄 **Progressive Disclosure**: Escalates to cluster view when results are overwhelming\n';
+    content += '📊 **Usage Learning**: Adapts to your exploration patterns over time\n';
+    content += '🧠 **Context Awareness**: Understands what you\'re working on and suggests related areas\n\n';
+    
+    content += '---\n\n';
+    content += `**Status**: 🟢 Active and learning your patterns\n`;
+    content += `**Session ID**: ${Date.now()}\n`;
+    content += `**Generated**: ${new Date().toISOString()}\n`;
     
     return content;
   }

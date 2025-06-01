@@ -16,6 +16,24 @@ export class ClusterTools {
   }
 
   /**
+   * Initialize cluster tools
+   */
+  async initialize() {
+    try {
+      // Check if super-graph exists
+      const superGraphPath = join(this.graphDir, 'supergraph.json');
+      if (!existsSync(superGraphPath)) {
+        console.warn('Super-graph not found, cluster tools will be limited');
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.warn('ClusterTools initialization failed:', error.message);
+      return false;
+    }
+  }
+
+  /**
    * ClusterList - Get overview of all clusters (startup tool)
    * Returns: Compressed view of entire codebase in ~1k tokens
    */
