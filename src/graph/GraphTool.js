@@ -1,4 +1,9 @@
 import { GraphService } from './GraphService.js';
+import { ContextOptimizer } from './ContextOptimizer.js';
+import { spawn } from 'child_process';
+import { existsSync } from 'fs';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 
 /**
  * Graph-aware tool for Claude Code integration
@@ -8,6 +13,7 @@ export class GraphTool {
   constructor(rootPath) {
     this.rootPath = rootPath;
     this.graphService = new GraphService(rootPath);
+    this.contextOptimizer = new ContextOptimizer(this.graphService);
     this.initialized = false;
   }
 
@@ -38,6 +44,24 @@ export class GraphTool {
       stats: this.initialized ? this.graphService.getStats() : null,
       issues: this.getHealthIssues()
     };
+  }
+
+  /**
+   * Get optimized context summary for Claude
+   */
+  async getContextSummary(options = {}) {
+    if (!this.initialized) {
+      await this.initialize();
+    }
+
+    if (!this.graphService.isHealthy()) {
+      return {
+        compact: "Graph: OFF",
+        detailed: { status: "Graph: OFF", reason: "No graph data available" }
+      };
+    }
+
+    return await this.contextOptimizer.generateContextSummary(options);
   }
 
   /**
@@ -365,5 +389,237 @@ export class GraphTool {
     }
     
     return 'potentially relevant based on graph analysis';
+  }
+
+  /**
+   * Check daemon status for Claude Code context
+   * @returns {Object} Daemon status information
+   */
+  async checkDaemonStatus() {
+    const lockFile = join(this.rootPath, '.graph', 'daemon.lock');
+    
+    if (!existsSync(lockFile)) {
+      return {
+        running: false,
+        status: 'Graph Daemon: OFF',
+        pid: null,
+        uptime: null
+      };
+    }
+
+    try {
+      const pidStr = await readFile(lockFile, 'utf8');
+      const pid = parseInt(pidStr.trim());
+      
+      // Check if process exists (Node.js way)
+      try {
+        process.kill(pid, 0); // Signal 0 just checks if process exists
+        
+        // Get uptime if possible
+        const stats = await this.getDaemonStats();
+        
+        return {
+          running: true,
+          status: 'Graph Daemon: ON',
+          pid: pid,
+          uptime: stats.uptime || null,
+          updates: stats.updates || 0
+        };
+      } catch (error) {
+        // Process doesn't exist, remove stale lock file
+        try {
+          await import('fs/promises').then(fs => fs.unlink(lockFile));
+        } catch {}
+        
+        return {
+          running: false,
+          status: 'Graph Daemon: OFF',
+          pid: null,
+          uptime: null
+        };
+      }
+    } catch (error) {
+      return {
+        running: false,
+        status: 'Graph Daemon: ERROR',
+        pid: null,
+        uptime: null,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Start the graph daemon
+   * @returns {Object} Start result
+   */
+  async startDaemon() {
+    try {
+      // Check if already running
+      const status = await this.checkDaemonStatus();
+      if (status.running) {
+        return {
+          success: true,
+          message: 'Daemon already running',
+          status: status
+        };
+      }
+
+      // Check Python dependencies first (try python3.12, then python3)
+      let pythonCmd = 'python3';
+      try {
+        await this.runCommand('python3.12', ['-c', 'import watchdog, networkx, psutil, aiofiles']);
+        pythonCmd = 'python3.12';
+      } catch (error) {
+        try {
+          await this.runCommand('python3', ['-c', 'import watchdog, networkx, psutil, aiofiles']);
+        } catch (error2) {
+          return {
+            success: false,
+            message: 'Missing Python dependencies. Install with: pip3 install watchdog networkx psutil aiofiles',
+            status: { running: false, status: 'Graph Daemon: DEPS_MISSING' }
+          };
+        }
+      }
+
+      // Find daemon script (look in common locations)
+      const possiblePaths = [
+        join(process.cwd(), 'tools', 'codegraphd.py'),
+        join(__dirname, '..', '..', 'tools', 'codegraphd.py'),
+        '/usr/local/lib/node_modules/claude-code-graph/tools/codegraphd.py',
+        join(process.env.HOME, '.nvm/versions/node/v22.15.0/lib/node_modules/claude-code-graph/tools/codegraphd.py')
+      ];
+
+      let daemonPath = null;
+      for (const path of possiblePaths) {
+        if (existsSync(path)) {
+          daemonPath = path;
+          break;
+        }
+      }
+
+      if (!daemonPath) {
+        return {
+          success: false,
+          message: 'Daemon script not found',
+          status: { running: false, status: 'Graph Daemon: SCRIPT_MISSING' }
+        };
+      }
+
+      // Start daemon with the detected Python version
+      const child = spawn(pythonCmd, [daemonPath], {
+        detached: true,
+        stdio: 'ignore',
+        cwd: this.rootPath
+      });
+      
+      child.unref();
+
+      // Wait and check if started
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      const newStatus = await this.checkDaemonStatus();
+
+      return {
+        success: newStatus.running,
+        message: newStatus.running ? 'Daemon started successfully' : 'Failed to start daemon',
+        status: newStatus
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to start daemon: ${error.message}`,
+        status: { running: false, status: 'Graph Daemon: ERROR' }
+      };
+    }
+  }
+
+  /**
+   * Stop the graph daemon
+   * @returns {Object} Stop result
+   */
+  async stopDaemon() {
+    try {
+      const status = await this.checkDaemonStatus();
+      
+      if (!status.running) {
+        return {
+          success: true,
+          message: 'Daemon not running',
+          status: { running: false, status: 'Graph Daemon: OFF' }
+        };
+      }
+
+      // Kill the process
+      process.kill(status.pid, 'SIGTERM');
+      
+      // Wait for process to stop
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const newStatus = await this.checkDaemonStatus();
+      
+      return {
+        success: !newStatus.running,
+        message: newStatus.running ? 'Failed to stop daemon' : 'Daemon stopped successfully',
+        status: newStatus
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to stop daemon: ${error.message}`,
+        status: { running: false, status: 'Graph Daemon: ERROR' }
+      };
+    }
+  }
+
+  /**
+   * Get daemon statistics
+   * @returns {Object} Daemon stats
+   */
+  async getDaemonStats() {
+    try {
+      const metricsFile = join(this.rootPath, '.graph', 'metrics.json');
+      if (existsSync(metricsFile)) {
+        const content = await readFile(metricsFile, 'utf8');
+        const metrics = JSON.parse(content);
+        
+        if (metrics.daemon) {
+          return {
+            uptime: metrics.daemon.daemon_start,
+            updates: metrics.daemon.updates || 0,
+            errors: metrics.daemon.errors || 0,
+            avgTime: metrics.daemon.avg_time || 0
+          };
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to read daemon stats:', error.message);
+    }
+    
+    return {};
+  }
+
+  /**
+   * Run a command and return result
+   * @param {string} command Command to run
+   * @param {Array} args Command arguments
+   * @returns {Promise} Command result
+   */
+  runCommand(command, args) {
+    return new Promise((resolve, reject) => {
+      const child = spawn(command, args, { stdio: 'pipe' });
+      let output = '';
+      
+      child.stdout?.on('data', (data) => output += data);
+      child.stderr?.on('data', (data) => output += data);
+      
+      child.on('close', (code) => {
+        if (code === 0) resolve(output);
+        else reject(new Error(`Command failed: ${command} ${args.join(' ')}`));
+      });
+      
+      child.on('error', reject);
+    });
   }
 }

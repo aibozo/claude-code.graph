@@ -2,6 +2,7 @@ import { GraphService } from './graph/GraphService.js';
 import { GraphTool } from './graph/GraphTool.js';
 import { GraphAwareToolSelector } from './graph/GraphAwareToolSelector.js';
 import { GraphCommands } from './graph/GraphCommands.js';
+import { TodoMonitor } from './graph/TodoMonitor.js';
 
 /**
  * Claude Code Graph - Main entry point
@@ -14,6 +15,7 @@ export class ClaudeCodeGraph {
     this.graphTool = new GraphTool(rootPath);
     this.toolSelector = new GraphAwareToolSelector(rootPath);
     this.commands = new GraphCommands(rootPath);
+    this.todoMonitor = new TodoMonitor(rootPath);
     this.initialized = false;
   }
 
@@ -101,23 +103,86 @@ export class ClaudeCodeGraph {
   }
 
   /**
-   * Start interactive mode (placeholder for full Claude Code integration)
+   * Start interactive mode - Generate context files for Claude Code
    */
   async startInteractiveMode() {
-    console.log('📊 Claude Code Graph is ready!');
+    console.log('📊 Generating Claude Code context files...');
+    
+    // Generate cluster context files that Claude Code will discover
+    await this.generateClaudeContext();
+    
     console.log('');
-    console.log('Available graph commands:');
+    console.log('✅ Context files generated! Now start Claude Code normally.');
+    console.log('💡 Claude will automatically use the graph intelligence.');
+    console.log('');
+    console.log('Available commands when in Claude Code:');
     
     const commands = this.commands.getAvailableCommands();
     Object.entries(commands).forEach(([cmd, info]) => {
       console.log(`  ${cmd.padEnd(20)} - ${info.description}`);
     });
     
-    console.log('');
-    console.log('💡 Use these commands to explore your codebase structure.');
-    
-    // In a full integration, this would start Claude Code with graph enhancements
     return true;
+  }
+
+  /**
+   * Generate context files for Claude Code to discover
+   */
+  async generateClaudeContext() {
+    try {
+      // Generate compressed cluster context
+      const clusterList = await this.commands.clusterTools.clusterList({ 
+        maxClusters: 20,
+        includeEdges: true,
+        includeMetrics: true 
+      });
+      
+      if (clusterList.success) {
+        // Create a context file that Claude will discover
+        const contextContent = this.formatClaudeContext(clusterList);
+        
+        const fs = await import('fs/promises');
+        await fs.writeFile('CLAUDE_GRAPH_CONTEXT.md', contextContent);
+        
+        console.log('✅ Generated CLAUDE_GRAPH_CONTEXT.md');
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to generate context files:', error.message);
+    }
+  }
+
+  /**
+   * Format cluster data for Claude context
+   */
+  formatClaudeContext(clusterList) {
+    let content = '# Codebase Graph Intelligence\n\n';
+    content += 'This codebase has been analyzed with claude-code-graph for intelligent navigation.\n\n';
+    
+    if (clusterList.metrics) {
+      content += `**Compression**: ${clusterList.metrics.totalFiles} files → ${clusterList.total} clusters (${clusterList.metrics.compressionRatio})\n\n`;
+    }
+    
+    content += '## Cluster Overview\n\n';
+    content += 'The codebase is organized into these semantic clusters:\n\n';
+    
+    clusterList.clusters.forEach((cluster, i) => {
+      content += `### ${cluster.id}: ${cluster.summary}\n`;
+      content += `- **Files**: ${cluster.files} | **Languages**: ${cluster.languages.join(', ')}\n`;
+      content += `- **Key Files**: ${cluster.keyFiles.slice(0, 3).join(', ')}\n`;
+      content += `- **Importance**: ${cluster.importance}\n\n`;
+    });
+    
+    content += '## Navigation Commands\n\n';
+    content += 'Use these commands to navigate efficiently:\n\n';
+    content += '- `/clusters` - Show all clusters\n';
+    content += '- `/cluster <id>` - Expand specific cluster\n';
+    content += '- `/csearch <query>` - Search clusters\n';
+    content += '- `/cfile <path>` - Get detailed file info\n\n';
+    
+    content += '## Usage\n\n';
+    content += 'Instead of scanning thousands of files, use the cluster overview to understand the codebase architecture, then drill down to specific areas using the navigation commands.\n';
+    
+    return content;
   }
 
   /**
@@ -290,3 +355,17 @@ export {
   GraphAwareToolSelector,
   GraphCommands
 };
+
+// CLI entry point
+if (import.meta.url === `file://${process.argv[1]}`) {
+  console.log('🧠 Claude Code Graph - AI-powered code analysis with graph intelligence\n');
+  
+  const rootPath = process.cwd();
+  const ccg = new ClaudeCodeGraph(rootPath);
+  
+  // Start the graph system
+  await ccg.start({
+    enableGraph: true,
+    args: process.argv.slice(2)
+  });
+}

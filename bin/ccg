@@ -177,26 +177,49 @@ async function showStatus(args) {
 }
 
 async function startClaude(args) {
-  console.log('🚀 Starting Claude Code with Graph Intelligence...\n');
+  console.log('🚀 Starting Claude Code Graph (CCG) with Intelligence...\n');
   
-  // Check if claude-code is available
-  try {
-    await runCommand('claude-code', ['--version']);
-  } catch (error) {
-    console.error('❌ claude-code not found. Please install Claude Code first.');
-    process.exit(1);
+  // Auto-initialize if needed
+  if (!existsSync('.graph')) {
+    console.log('🔧 First time setup - initializing...');
+    await initProject([]);
+  } else {
+    // Check if graphs exist, build if missing or outdated
+    const graphFiles = ['js.json', 'py.dot', 'ts.json', 'metrics.json'];
+    const existing = graphFiles.filter(f => existsSync(join('.graph', f)));
+    
+    if (existing.length === 0) {
+      console.log('📊 Building initial graphs...');
+      await buildGraph([]);
+    } else {
+      console.log('✅ Graphs ready');
+    }
   }
   
-  // Start daemon if not running
+  // Start daemon if not running (optional for live updates)
   const isRunning = await checkDaemonStatus();
   if (!isRunning) {
     console.log('🤖 Starting graph daemon...');
-    await manageDaemon(['start']);
+    try {
+      await manageDaemon(['start']);
+    } catch (error) {
+      console.log('⚠️ Daemon startup failed, continuing without live updates');
+      console.log('💡 Graphs will still work, just won\'t auto-update on file changes');
+    }
   }
   
-  // Launch Claude Code
-  console.log('🎯 Launching Claude Code...');
-  const child = spawn('claude-code', args, { 
+  // Launch the CCG main application with graph intelligence
+  console.log('🎯 Launching Claude Code Graph...');
+  const packageRoot = join(__dirname, '..');
+  const mainScript = join(packageRoot, 'src', 'index.js');
+  
+  if (!existsSync(mainScript)) {
+    console.error('❌ CCG main script not found:', mainScript);
+    console.error('💡 Make sure the package is properly installed');
+    process.exit(1);
+  }
+  
+  const child = spawn('node', [mainScript, ...args], { 
     stdio: 'inherit',
     cwd: process.cwd()
   });
@@ -213,8 +236,32 @@ async function manageDaemon(args) {
   switch (action) {
     case 'start':
       console.log('🤖 Starting graph daemon...');
+      
+      // Check Python dependencies first (try python3.12, then python3)
+      let pythonCmd = 'python3';
+      try {
+        await runCommand('python3.12', ['-c', 'import watchdog, networkx, psutil, aiofiles']);
+        pythonCmd = 'python3.12';
+      } catch (error) {
+        try {
+          await runCommand('python3', ['-c', 'import watchdog, networkx, psutil, aiofiles']);
+        } catch (error2) {
+          console.log('⚠️ Missing Python dependencies for daemon');
+          console.log('💡 Install with: pip3 install watchdog networkx psutil aiofiles');
+          console.log('🔄 Continuing without live updates (graphs will still work)');
+          return;
+        }
+      }
+      
       const venvPath = join(rootPath, '.venv', 'bin', 'activate');
-      const daemonPath = join(__dirname, '..', 'tools', 'codegraphd.py');
+      // Find the installed package path
+      const packageRoot = join(__dirname, '..');
+      const daemonPath = join(packageRoot, 'tools', 'codegraphd.py');
+      
+      if (!existsSync(daemonPath)) {
+        console.log('❌ Daemon script not found');
+        return;
+      }
       
       if (existsSync(venvPath)) {
         spawn('bash', ['-c', `source ${venvPath} && python ${daemonPath}`], { 
@@ -223,7 +270,7 @@ async function manageDaemon(args) {
           cwd: rootPath
         }).unref();
       } else {
-        spawn('python3', [daemonPath], { 
+        spawn(pythonCmd, [daemonPath], { 
           detached: true, 
           stdio: 'ignore',
           cwd: rootPath
@@ -231,9 +278,9 @@ async function manageDaemon(args) {
       }
       
       // Wait and check if started
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
       const isRunning = await checkDaemonStatus();
-      console.log(isRunning ? '✅ Daemon started' : '❌ Failed to start daemon');
+      console.log(isRunning ? '✅ Daemon started' : '❌ Failed to start daemon (check .graph/daemon.log for details)');
       break;
       
     case 'stop':
@@ -254,7 +301,9 @@ async function manageDaemon(args) {
 async function buildGraph(args) {
   console.log('📊 Building code graphs...\n');
   
-  const buildScript = join(__dirname, '..', 'tools', 'codegraph.sh');
+  // Find the installed package path  
+  const packageRoot = join(__dirname, '..');
+  const buildScript = join(packageRoot, 'tools', 'codegraph.sh');
   
   if (!existsSync(buildScript)) {
     console.error('❌ Build script not found');

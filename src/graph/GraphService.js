@@ -1,6 +1,8 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { Graph } from 'graphlib';
+import { GraphClustering } from './GraphClustering.js';
+import { ClusterTools } from './ClusterTools.js';
 
 /**
  * Core service for managing and querying code graphs
@@ -14,6 +16,8 @@ export class GraphService {
     this.metadata = null;
     this.lastUpdate = null;
     this.cache = new Map();
+    this.clustering = new GraphClustering(rootPath);
+    this.clusterTools = new ClusterTools(rootPath);
   }
 
   /**
@@ -23,6 +27,10 @@ export class GraphService {
     try {
       await this.loadMetadata();
       await this.loadAllGraphs();
+      
+      // Generate/update super-graph if needed
+      await this.ensureSuperGraph();
+      
       this.lastUpdate = new Date();
       return true;
     } catch (error) {
@@ -533,5 +541,104 @@ export class GraphService {
     }
     
     return stats;
+  }
+
+  /**
+   * Ensure super-graph exists and is up to date
+   */
+  async ensureSuperGraph() {
+    try {
+      // Combine all graph data
+      const combinedData = await this.getCombinedGraphData();
+      
+      if (combinedData.nodes.length === 0) {
+        console.log('   No graph data available for clustering');
+        return;
+      }
+
+      // Check if regeneration is needed
+      const existingSuperGraph = await this.clustering.loadSuperGraph();
+      
+      if (!this.clustering.shouldRegenerate(combinedData, existingSuperGraph)) {
+        console.log('   Super-graph is up to date');
+        return;
+      }
+
+      console.log('🔄 Generating super-graph...');
+      await this.clustering.generateSuperGraph(combinedData);
+      console.log('✅ Super-graph generated');
+      
+    } catch (error) {
+      console.warn('Super-graph generation failed:', error.message);
+    }
+  }
+
+  /**
+   * Get combined data from all graphs for clustering
+   */
+  async getCombinedGraphData() {
+    const allNodes = [];
+    const allEdges = [];
+
+    // Load tree-sitter data (main source of file-level dependencies)
+    try {
+      const tsPath = path.join(this.graphDir, 'ts.json');
+      const tsContent = await fs.readFile(tsPath, 'utf8');
+      const tsData = JSON.parse(tsContent);
+      
+      if (tsData.nodes) allNodes.push(...tsData.nodes);
+      if (tsData.edges) allEdges.push(...tsData.edges);
+    } catch (error) {
+      console.warn('Could not load tree-sitter data for clustering');
+    }
+
+    // Add nodes for any files not captured in tree-sitter
+    for (const [language, graph] of this.graphs) {
+      for (const nodeId of graph.nodes()) {
+        const nodeData = graph.node(nodeId);
+        if (nodeData?.file && !allNodes.find(n => n.file === nodeData.file)) {
+          allNodes.push({
+            id: nodeId,
+            file: nodeData.file,
+            type: nodeData.type || 'unknown',
+            language
+          });
+        }
+      }
+
+      // Add edges from language-specific graphs
+      for (const edge of graph.edges()) {
+        const fromNode = graph.node(edge.v);
+        const toNode = graph.node(edge.w);
+        const edgeData = graph.edge(edge);
+        
+        if (fromNode?.file && toNode?.file) {
+          allEdges.push({
+            from: fromNode.file,
+            to: toNode.file,
+            type: edgeData?.type || 'dependency',
+            weight: edgeData?.weight || 1,
+            source: language
+          });
+        }
+      }
+    }
+
+    return { nodes: allNodes, edges: allEdges };
+  }
+
+  /**
+   * Get cluster tools for Claude interface
+   */
+  getClusterTools() {
+    return this.clusterTools;
+  }
+
+  /**
+   * Check if super-graph is available
+   */
+  async hasSuperGraph() {
+    const superGraph = await this.clustering.loadSuperGraph();
+    return superGraph !== null;
   }
 }

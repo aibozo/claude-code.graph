@@ -1,4 +1,5 @@
 import { GraphTool } from './GraphTool.js';
+import { ClusterTools } from './ClusterTools.js';
 import path from 'path';
 import fs from 'fs/promises';
 import { spawn, exec } from 'child_process';
@@ -14,6 +15,7 @@ export class GraphCommands {
   constructor(rootPath) {
     this.rootPath = rootPath;
     this.graphTool = new GraphTool(rootPath);
+    this.clusterTools = new ClusterTools(rootPath);
     this.initialized = false;
   }
 
@@ -85,6 +87,26 @@ export class GraphCommands {
         description: 'Show daemon status and performance metrics',
         usage: '/dstatus',
         example: '/dstatus'
+      },
+      '/clusters': {
+        description: 'Show compressed cluster overview of codebase',
+        usage: '/clusters [--limit=N]',
+        example: '/clusters --limit=10'
+      },
+      '/cluster': {
+        description: 'Expand specific cluster to see files',
+        usage: '/cluster <cluster_id>',
+        example: '/cluster c0'
+      },
+      '/cfile': {
+        description: 'Get detailed information about a specific file',
+        usage: '/cfile <file_path>',
+        example: '/cfile src/main.py'
+      },
+      '/csearch': {
+        description: 'Search clusters by description or keywords',
+        usage: '/csearch <query>',
+        example: '/csearch "test utils"'
       }
     };
   }
@@ -133,6 +155,18 @@ export class GraphCommands {
         
         case '/dstatus':
           return await this.handleDaemonStatusCommand(args, options);
+        
+        case '/clusters':
+          return await this.handleClustersCommand(args, options);
+        
+        case '/cluster':
+          return await this.handleClusterExpandCommand(args, options);
+        
+        case '/cfile':
+          return await this.handleClusterFileCommand(args, options);
+        
+        case '/csearch':
+          return await this.handleClusterSearchCommand(args, options);
         
         default:
           return this.formatError(`Unknown command: ${command}`, 
@@ -348,6 +382,107 @@ export class GraphCommands {
       return this.formatDaemonStatus(status);
     } catch (error) {
       return this.formatError('Failed to get daemon status', error.message);
+    }
+  }
+
+  /**
+   * Handle /clusters command - Show cluster overview
+   */
+  async handleClustersCommand(args, options) {
+    try {
+      const limit = options.limit || parseInt(args.find(arg => arg.startsWith('--limit='))?.split('=')[1]) || 20;
+      
+      const result = await this.clusterTools.clusterList({ 
+        maxClusters: limit,
+        includeEdges: true,
+        includeMetrics: true 
+      });
+      
+      if (!result.success) {
+        return this.formatError('Failed to load clusters', result.error);
+      }
+      
+      return this.formatClusters(result);
+    } catch (error) {
+      return this.formatError('Cluster command failed', error.message);
+    }
+  }
+
+  /**
+   * Handle /cluster command - Expand specific cluster
+   */
+  async handleClusterExpandCommand(args, options) {
+    if (args.length === 0) {
+      return this.formatError('Missing cluster ID', 'Usage: /cluster <cluster_id> (e.g., /cluster c0)');
+    }
+    
+    try {
+      const clusterId = args[0];
+      const maxFiles = options.files || 20;
+      
+      const result = await this.clusterTools.clusterExpand(clusterId, {
+        includeFileDetails: true,
+        maxFiles
+      });
+      
+      if (!result.success) {
+        return this.formatError(`Failed to expand cluster ${clusterId}`, result.error);
+      }
+      
+      return this.formatClusterExpansion(result);
+    } catch (error) {
+      return this.formatError('Cluster expansion failed', error.message);
+    }
+  }
+
+  /**
+   * Handle /cfile command - Get file details
+   */
+  async handleClusterFileCommand(args, options) {
+    if (args.length === 0) {
+      return this.formatError('Missing file path', 'Usage: /cfile <file_path>');
+    }
+    
+    try {
+      const filePath = args[0];
+      
+      const result = await this.clusterTools.fileGet(filePath, {
+        includeSymbols: true,
+        includeDependencies: true,
+        includeContent: options.content || false
+      });
+      
+      if (!result.success) {
+        return this.formatError(`Failed to get file info for ${filePath}`, result.error);
+      }
+      
+      return this.formatFileDetails(result);
+    } catch (error) {
+      return this.formatError('File details failed', error.message);
+    }
+  }
+
+  /**
+   * Handle /csearch command - Search clusters
+   */
+  async handleClusterSearchCommand(args, options) {
+    if (args.length === 0) {
+      return this.formatError('Missing search query', 'Usage: /csearch <query>');
+    }
+    
+    try {
+      const query = args.join(' ');
+      const maxResults = options.limit || 10;
+      
+      const result = await this.clusterTools.clusterSearch(query, { maxResults });
+      
+      if (!result.success) {
+        return this.formatError('Search failed', result.error);
+      }
+      
+      return this.formatSearchResults(query, result);
+    } catch (error) {
+      return this.formatError('Cluster search failed', error.message);
     }
   }
 
@@ -842,5 +977,157 @@ export class GraphCommands {
       type: 'info',
       content: `ℹ️ **Info**: ${message}${details ? `\n\n${details}` : ''}`
     };
+  }
+
+  /**
+   * Format clusters overview
+   */
+  formatClusters(result) {
+    let output = '## 🧠 Codebase Clusters Overview\n\n';
+    
+    if (result.metrics) {
+      output += `**Compression**: ${result.metrics.totalFiles} files → ${result.total} clusters (${result.metrics.compressionRatio})\n`;
+      output += `**Last Updated**: ${new Date(result.metrics.lastUpdated).toLocaleString()}\n\n`;
+    }
+    
+    if (result.clusters.length === 0) {
+      output += '*No clusters available. Run `/gupdate` to rebuild graphs.*\n';
+      return { type: 'info', content: output };
+    }
+    
+    output += '### Clusters (by importance)\n\n';
+    
+    result.clusters.forEach((cluster, i) => {
+      output += `#### ${i + 1}. \`${cluster.id}\`: ${cluster.summary}\n`;
+      output += `- **Files**: ${cluster.files} | **Languages**: ${cluster.languages.join(', ')}\n`;
+      output += `- **Key Files**: ${cluster.keyFiles.slice(0, 3).join(', ')}${cluster.keyFiles.length > 3 ? '...' : ''}\n`;
+      output += `- **Connections**: ${cluster.connections} | **Importance**: ${cluster.importance}\n\n`;
+    });
+    
+    if (result.majorConnections && result.majorConnections.length > 0) {
+      output += '### 🔗 Major Cluster Connections\n\n';
+      result.majorConnections.forEach(conn => {
+        output += `- **${conn.from}** → **${conn.to}** (strength: ${conn.strength})\n`;
+      });
+      output += '\n';
+    }
+    
+    output += '### 💡 Navigation Commands\n';
+    output += '- `/cluster <id>` - Expand specific cluster\n';
+    output += '- `/csearch <query>` - Search clusters\n';
+    output += '- `/cfile <path>` - Get file details\n';
+    
+    return { type: 'success', content: output };
+  }
+
+  /**
+   * Format cluster expansion
+   */
+  formatClusterExpansion(result) {
+    const cluster = result.cluster;
+    let output = `## 📁 Cluster \`${cluster.id}\` Details\n\n`;
+    
+    output += `**Description**: ${cluster.description}\n`;
+    output += `**Files**: ${cluster.showing}/${cluster.totalFiles} shown\n`;
+    output += `**Languages**: ${cluster.languages.join(', ')}\n\n`;
+    
+    if (cluster.keyFiles && cluster.keyFiles.length > 0) {
+      output += '### 🔑 Key Files\n';
+      cluster.keyFiles.forEach(file => {
+        output += `- \`${file}\`\n`;
+      });
+      output += '\n';
+    }
+    
+    output += '### 📄 All Files\n';
+    result.files.forEach((file, i) => {
+      output += `${i + 1}. \`${file.shortPath}\` (${file.type})`;
+      if (file.lines) {
+        output += ` - ${file.lines} lines, ${file.estimatedComplexity} complexity`;
+      }
+      output += '\n';
+    });
+    
+    if (result.hasMore) {
+      output += `\n*... and ${cluster.totalFiles - cluster.showing} more files*\n`;
+    }
+    
+    if (result.connections && result.connections.length > 0) {
+      output += '\n### 🔗 Connected Clusters\n';
+      result.connections.slice(0, 5).forEach(conn => {
+        const arrow = conn.direction === 'outgoing' ? '→' : '←';
+        output += `- ${arrow} **${conn.description}** (weight: ${conn.weight})\n`;
+      });
+    }
+    
+    return { type: 'success', content: output };
+  }
+
+  /**
+   * Format file details
+   */
+  formatFileDetails(result) {
+    const file = result.file;
+    let output = `## 📄 File Details: \`${file.shortPath}\`\n\n`;
+    
+    output += `**Type**: ${file.type} (${file.language})\n`;
+    output += `**Size**: ${file.size}\n`;
+    output += `**Path**: \`${file.path}\`\n\n`;
+    
+    if (file.symbols && file.symbols.length > 0) {
+      output += '### 🔧 Symbols\n';
+      const symbolsByType = {};
+      file.symbols.forEach(symbol => {
+        if (!symbolsByType[symbol.type]) symbolsByType[symbol.type] = [];
+        symbolsByType[symbol.type].push(symbol.name);
+      });
+      
+      Object.entries(symbolsByType).forEach(([type, names]) => {
+        output += `- **${type}**: ${names.slice(0, 5).join(', ')}${names.length > 5 ? `... (+${names.length - 5} more)` : ''}\n`;
+      });
+      output += '\n';
+    }
+    
+    if (file.dependencies) {
+      output += '### 🔗 Dependencies\n';
+      output += `- **Imports**: ${file.dependencies.imports.length}\n`;
+      output += `- **Exports**: ${file.dependencies.exports.length}\n`;
+      output += `- **Dependents**: ${file.dependencies.dependents.length}\n\n`;
+    }
+    
+    if (file.contentPreview) {
+      output += '### 👀 Content Preview\n';
+      output += '```\n';
+      output += file.contentPreview;
+      output += '\n```\n';
+      output += `\n*Preview of ${file.fullSize} characters total*\n`;
+    }
+    
+    return { type: 'success', content: output };
+  }
+
+  /**
+   * Format search results
+   */
+  formatSearchResults(query, result) {
+    let output = `## 🔍 Search Results for "${query}"\n\n`;
+    
+    if (result.results.length === 0) {
+      output += '*No clusters found matching your query.*\n\n';
+      output += '💡 Try broader terms or use `/clusters` to see all available clusters.\n';
+      return { type: 'info', content: output };
+    }
+    
+    output += `Found ${result.results.length} matching cluster${result.results.length === 1 ? '' : 's'}:\n\n`;
+    
+    result.results.forEach((match, i) => {
+      const cluster = match.cluster;
+      output += `### ${i + 1}. \`${cluster.id}\` (Score: ${match.score})\n`;
+      output += `**Description**: ${cluster.description}\n`;
+      output += `**Files**: ${cluster.files} | **Languages**: ${cluster.languages.join(', ')}\n`;
+      output += `*Use \`/cluster ${cluster.id}\` to expand*\n\n`;
+    });
+    
+    return { type: 'success', content: output };
   }
 }

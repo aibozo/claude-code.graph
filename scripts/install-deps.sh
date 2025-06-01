@@ -18,23 +18,25 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# Function to install package based on OS
+# Function to install package based on OS (non-interactive)
 install_package() {
     local package=$1
     
+    echo -e "${YELLOW}⚠️ Optional system package: $package${NC}"
+    echo "💡 To install manually:"
+    
     if command_exists brew; then
-        echo "Installing $package with brew..."
-        brew install "$package"
+        echo "  brew install $package"
     elif command_exists apt-get; then
-        echo "Installing $package with apt..."
-        sudo apt-get update && sudo apt-get install -y "$package"
+        echo "  sudo apt-get install $package"
     elif command_exists pacman; then
-        echo "Installing $package with pacman..."
-        sudo pacman -S "$package"
+        echo "  sudo pacman -S $package"
     else
-        echo -e "${RED}❌ No supported package manager found. Please install $package manually.${NC}"
-        return 1
+        echo "  (use your system package manager)"
     fi
+    
+    echo "🔄 Continuing without $package..."
+    return 0
 }
 
 echo "📦 Checking system dependencies..."
@@ -46,21 +48,8 @@ for dep in "${SYSTEM_DEPS[@]}"; do
     if command_exists "$dep"; then
         echo -e "${GREEN}✅ $dep is already installed${NC}"
     else
-        echo -e "${YELLOW}⚠️ Installing $dep...${NC}"
-        case "$dep" in
-            "ripgrep")
-                if command_exists brew; then
-                    brew install ripgrep
-                elif command_exists apt-get; then
-                    sudo apt-get update && sudo apt-get install -y ripgrep
-                else
-                    echo -e "${RED}❌ Please install ripgrep manually${NC}"
-                fi
-                ;;
-            *)
-                install_package "$dep"
-                ;;
-        esac
+        echo -e "${YELLOW}⚠️ Optional: $dep${NC}"
+        echo "💡 Install manually if needed: brew install $dep (macOS) or sudo apt install $dep (Ubuntu)"
     fi
 done
 
@@ -110,14 +99,25 @@ fi
 
 # Install Python dependencies
 echo "Installing Python packages..."
-pip3 install --user watchdog networkx psutil aiofiles
+pip3 install --user watchdog networkx psutil aiofiles 2>/dev/null || {
+    echo -e "${YELLOW}⚠️ Failed to install with --user flag, trying without...${NC}"
+    pip3 install watchdog networkx psutil aiofiles 2>/dev/null || {
+        echo -e "${RED}❌ Failed to install Python dependencies${NC}"
+        echo "💡 You may need to run: sudo pip3 install watchdog networkx psutil aiofiles"
+        echo "🔄 Continuing anyway - daemon will provide instructions if needed"
+    }
+}
 
-# Check for pyan3 (install if not available)
+# Check for pyan3 (install if not available)  
 if python3 -c "import pyan" 2>/dev/null; then
     echo -e "${GREEN}✅ pyan3 is available${NC}"
 else
     echo -e "${YELLOW}⚠️ Installing pyan3...${NC}"
-    pip3 install --user pyan3
+    pip3 install --user pyan3 2>/dev/null || {
+        pip3 install pyan3 2>/dev/null || {
+            echo -e "${YELLOW}⚠️ Failed to install pyan3, continuing without Python call graph analysis${NC}"
+        }
+    }
 fi
 
 echo "🟢 Node.js dependencies..."
@@ -143,7 +143,10 @@ if command_exists tree-sitter; then
     echo -e "${GREEN}✅ tree-sitter is available${NC}"
 else
     echo -e "${YELLOW}⚠️ Installing tree-sitter globally...${NC}"
-    npm install -g tree-sitter-cli
+    npm install -g tree-sitter-cli 2>/dev/null || {
+        echo -e "${YELLOW}⚠️ Failed to install tree-sitter globally${NC}"
+        echo "💡 Install manually: npm install -g tree-sitter-cli"
+    }
 fi
 
 # Install madge for JavaScript dependency analysis
@@ -151,7 +154,10 @@ if command_exists madge; then
     echo -e "${GREEN}✅ madge is available${NC}"
 else
     echo -e "${YELLOW}⚠️ Installing madge globally...${NC}"
-    npm install -g madge
+    npm install -g madge 2>/dev/null || {
+        echo -e "${YELLOW}⚠️ Failed to install madge globally${NC}"
+        echo "💡 Install manually: npm install -g madge"
+    }
 fi
 
 echo "🎉 Dependency installation complete!"

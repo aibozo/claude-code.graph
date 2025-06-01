@@ -20,7 +20,10 @@
       "Bash(python -m pyan:*)",
       "Bash(node:*)",
       "Bash(npm test)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(cat:*)",
+      "Bash(npm pack)",
+      "Bash(ls:*)"
     ],
     "deny": []
   }

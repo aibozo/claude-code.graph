@@ -82,13 +82,58 @@ if command_exists tree-sitter; then
             tree-sitter init-config
         fi
         
-        # Query and build graph
-        echo "   Generating AST graph..."
-        tree-sitter query . --captures > "$GRAPH_DIR/ts.json" 2>/dev/null || {
-            echo "   Using fallback method..."
-            find . -name "*.js" -o -name "*.ts" -o -name "*.py" | head -1000 > "$GRAPH_DIR/file-list.txt"
-            echo '{"nodes": [], "edges": [], "metadata": {"tool": "fallback", "timestamp": "'$(date -Iseconds)'"}}' > "$GRAPH_DIR/ts.json"
-        }
+        # Query and build graph with optimized fast tree-sitter
+        echo "   Generating AST graph with fast parser..."
+        
+        # Create filtered file list for tree-sitter (limit to supported languages and exclude large dirs)
+        TEMP_FILE_LIST=$(mktemp)
+        find . \( -name "*.js" -o -name "*.ts" -o -name "*.py" -o -name "*.c" -o -name "*.cpp" -o -name "*.h" -o -name "*.hpp" \) \
+               -not -path "./node_modules/*" \
+               -not -path "./.graph/*" \
+               -not -path "./dist/*" \
+               -not -path "./build/*" \
+               -not -path "./.venv/*" \
+               -not -path "./venv/*" \
+               -not -path "./.git/*" \
+               -not -path "./__pycache__/*" \
+               | head -1000 > "$TEMP_FILE_LIST"  # Increased limit to 1000
+        
+        FILE_COUNT=$(wc -l < "$TEMP_FILE_LIST")
+        echo "   Processing $FILE_COUNT files with fast tree-sitter..."
+        
+        # Try fast tree-sitter first (optimized with shallow queries)
+        if [ -f "$(dirname "$0")/fast-treesitter.js" ] && command_exists node; then
+            echo "   Using optimized fast tree-sitter parser..."
+            node "$(dirname "$0")/fast-treesitter.js" "$(pwd)" $(cat "$TEMP_FILE_LIST" | tr '\n' ' ') > "$GRAPH_DIR/ts.json" 2>/dev/null || {
+                echo "   Fast parser failed, trying standard tree-sitter..."
+                # Fallback to original method but with higher limit
+                if [ "$FILE_COUNT" -lt 300 ]; then
+                    tree-sitter query $(cat "$TEMP_FILE_LIST" | tr '\n' ' ') --captures > "$GRAPH_DIR/ts.json" 2>/dev/null || {
+                        echo "   Tree-sitter failed, using file list fallback..."
+                        cp "$TEMP_FILE_LIST" "$GRAPH_DIR/file-list.txt"
+                        echo '{"nodes": [], "edges": [], "metadata": {"tool": "fallback", "timestamp": "'$(date -Iseconds)'", "file_count": '$FILE_COUNT'}}' > "$GRAPH_DIR/ts.json"
+                    }
+                else
+                    echo "   Too many files for standard parser, using fast fallback..."
+                    echo '{"nodes": [], "edges": [], "metadata": {"tool": "fast-fallback", "timestamp": "'$(date -Iseconds)'", "file_count": '$FILE_COUNT'}}' > "$GRAPH_DIR/ts.json"
+                fi
+            }
+        else
+            echo "   Fast parser not available, using standard tree-sitter..."
+            if [ "$FILE_COUNT" -lt 300 ]; then
+                tree-sitter query $(cat "$TEMP_FILE_LIST" | tr '\n' ' ') --captures > "$GRAPH_DIR/ts.json" 2>/dev/null || {
+                    echo "   Tree-sitter failed, using file list fallback..."
+                    cp "$TEMP_FILE_LIST" "$GRAPH_DIR/file-list.txt"
+                    echo '{"nodes": [], "edges": [], "metadata": {"tool": "fallback", "timestamp": "'$(date -Iseconds)'", "file_count": '$FILE_COUNT'}}' > "$GRAPH_DIR/ts.json"
+                }
+            else
+                echo "   Too many files ($FILE_COUNT), using fallback..."
+                cp "$TEMP_FILE_LIST" "$GRAPH_DIR/file-list.txt"
+                echo '{"nodes": [], "edges": [], "metadata": {"tool": "fallback", "timestamp": "'$(date -Iseconds)'", "file_count": '$FILE_COUNT'}}' > "$GRAPH_DIR/ts.json"
+            fi
+        fi
+        
+        rm -f "$TEMP_FILE_LIST"
         echo -e "   ${GREEN}✅ Tree-sitter graph updated${NC}"
     else
         echo -e "   ${GREEN}✅ Tree-sitter graph is up to date${NC}"
@@ -104,8 +149,16 @@ if [ "$PY_COUNT" -gt 0 ]; then
     if command_exists pyan3; then
         echo -e "${YELLOW}🐍 Building Python call graph...${NC}"
         
-        # Find Python files
-        PY_FILES=$(find . -name "*.py" -not -path "./node_modules/*" -not -path "./.graph/*" -not -path "./venv/*" -not -path "./.venv/*" -not -path "./tools/codegraphd.py" | head -100)
+        # Find Python files (with better filtering)
+        PY_FILES=$(find . -name "*.py" \
+                   -not -path "./node_modules/*" \
+                   -not -path "./.graph/*" \
+                   -not -path "./venv/*" \
+                   -not -path "./.venv/*" \
+                   -not -path "./dist/*" \
+                   -not -path "./build/*" \
+                   -not -path "./__pycache__/*" \
+                   -not -path "./tools/codegraphd.py" | head -50)
         
         if [ -n "$PY_FILES" ]; then
             # Use virtual environment if available, fallback to system python
@@ -167,9 +220,15 @@ fi
 if [ "$((C_COUNT + CPP_COUNT))" -gt 0 ]; then
     echo -e "${YELLOW}🔧 Building C/C++ dependency graph...${NC}"
     
-    # Find C/C++ files
-    CPP_FILES=$(find . -name "*.cpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" -o -name "*.h" -o -name "*.hpp" | \
-                grep -v node_modules | grep -v .graph | grep -v .venv | head -500)
+    # Find C/C++ files (with better filtering)
+    CPP_FILES=$(find . \( -name "*.cpp" -o -name "*.cc" -o -name "*.cxx" -o -name "*.c" -o -name "*.h" -o -name "*.hpp" \) \
+                -not -path "./node_modules/*" \
+                -not -path "./.graph/*" \
+                -not -path "./venv/*" \
+                -not -path "./.venv/*" \
+                -not -path "./dist/*" \
+                -not -path "./build/*" \
+                -not -path "./third_party/*" | head -200)
     
     if [ -n "$CPP_FILES" ]; then
         # Method 1: Try clangd-based analysis (if available)
@@ -301,12 +360,35 @@ cat > "$GRAPH_DIR/metrics.json" << EOF
 }
 EOF
 
+# Generate super-graph (clustering)
+echo -e "${YELLOW}🧠 Generating super-graph clusters...${NC}"
+
+# Find the installed package path for the super-graph script
+PACKAGE_ROOT="$(dirname "$(dirname "$0")")"
+SUPER_GRAPH_SCRIPT="$PACKAGE_ROOT/tools/generate-supergraph.js"
+
+if [ -f "$SUPER_GRAPH_SCRIPT" ] && command_exists node; then
+    echo "   Generating clusters from combined graph data..."
+    node "$SUPER_GRAPH_SCRIPT" "$ROOT_DIR" 2>/dev/null || {
+        echo -e "   ${YELLOW}⚠️ Super-graph generation failed, graphs will still work${NC}"
+    }
+    
+    if [ -f "$GRAPH_DIR/supergraph.json" ]; then
+        echo -e "   ${GREEN}✅ Super-graph generated${NC}"
+    else
+        echo -e "   ${YELLOW}⚠️ Super-graph not created${NC}"
+    fi
+else
+    echo -e "   ${YELLOW}⚠️ Super-graph script not found, skipping clustering${NC}"
+fi
+
 echo -e "${GREEN}🎉 Graph build complete!${NC}"
 echo ""
 echo "Generated files:"
 [ -f "$GRAPH_DIR/ts.json" ] && echo "  📄 $GRAPH_DIR/ts.json (AST graph)"
 [ -f "$GRAPH_DIR/py.dot" ] && echo "  📄 $GRAPH_DIR/py.dot (Python calls)"
 [ -f "$GRAPH_DIR/js.json" ] && echo "  📄 $GRAPH_DIR/js.json (JS/TS modules)"
+[ -f "$GRAPH_DIR/supergraph.json" ] && echo "  📄 $GRAPH_DIR/supergraph.json (clustered graph)"
 echo "  📄 $GRAPH_DIR/metrics.json (metrics)"
 echo ""
 echo "Next: Start the graph daemon with 'npm run graph:daemon'"

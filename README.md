@@ -1,54 +1,170 @@
-# Claude Code
+# Claude Code Graph
 
-![](https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square) [![npm]](https://www.npmjs.com/package/@anthropic-ai/claude-code)
+![](https://img.shields.io/badge/Node.js-18%2B-brightgreen?style=flat-square) ![](https://img.shields.io/badge/Python-3.8%2B-blue?style=flat-square) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-[npm]: https://img.shields.io/npm/v/@anthropic-ai/claude-code.svg?style=flat-square
+**Claude Code with intelligent code graphs for large codebases**
 
-Claude Code is an agentic coding tool that lives in your terminal, understands your codebase, and helps you code faster by executing routine tasks, explaining complex code, and handling git workflows - all through natural language commands.
+Claude Code Graph enhances Claude Code with live structural analysis of your codebase. It builds and maintains graphs of your code's architecture, dependencies, and relationships - giving Claude deep contextual understanding of even the largest projects.
 
-Some of its key capabilities include:
+## 🚀 Quick Start
 
-- Edit files and fix bugs across your codebase
-- Answer questions about your code's architecture and logic
-- Execute and fix tests, lint, and other commands
-- Search through git history, resolve merge conflicts, and create commits and PRs
+### Prerequisites
 
-**Learn more in the [official documentation](https://docs.anthropic.com/en/docs/claude-code/overview)**.
+Make sure you have Claude Code installed first:
+```bash
+npm install -g @anthropic-ai/claude-code
+```
 
-## Get started
+### Installation
 
-1. If you are new to Node.js and Node Package Manager (`npm`), then it is recommended that you configure an NPM prefix for your user.
-   Instructions on how to do this can be found [here](https://docs.anthropic.com/en/docs/claude-code/troubleshooting#recommended-solution-create-a-user-writable-npm-prefix).
-
-   _Important_ We recommend installing this package as a non-privileged user, not as an administrative user like `root`.
-   Installing as a non-privileged user helps maintain your system's security and stability.
-
-2. Install Claude Code:
-
-   ```sh
-   npm install -g @anthropic-ai/claude-code
+1. **Install Claude Code Graph globally:**
+   ```bash
+   npm install -g claude-code-graph
    ```
 
-3. Navigate to your project directory and run `claude`.
+2. **Navigate to your project and start coding:**
+   ```bash
+   cd your-project/
+   ccg start
+   ```
 
-4. Complete the one-time OAuth process with your Claude Max or Anthropic Console account.
+That's it! The first run will automatically:
+- Initialize graph structures
+- Build code analysis graphs
+- Start the live update daemon  
+- Launch Claude Code with graph intelligence
 
-### Reporting Bugs
+## 🎯 What It Does
 
-We welcome feedback during this beta period. Use the `/bug` command to report issues directly within Claude Code, or file a [GitHub issue](https://github.com/anthropics/claude-code/issues).
+Claude Code Graph provides Claude with:
 
-### Data collection, usage, and retention
+- **Dependency Analysis**: Understand how files and modules relate to each other
+- **Call Graph Mapping**: Track function calls and inheritance chains across languages
+- **AST Structure**: Deep understanding of code syntax and semantics
+- **Architecture Overview**: High-level view of your codebase organization
+- **Live Updates**: Graphs stay current as you code
 
-When you use Claude Code, we collect feedback, which includes usage data (such as code acceptance or rejections), associated conversation data, and user feedback submitted via the `/bug` command.
+### Supported Languages
 
-#### How we use your data
+- **JavaScript/TypeScript**: Module dependencies via madge
+- **Python**: Call graphs via pyan3, import analysis
+- **C/C++**: Include dependencies, symbol analysis  
+- **Universal**: AST parsing with tree-sitter for all languages
 
-We may use feedback to improve our products and services, but we will not train generative models using your feedback from Claude Code. Given their potentially sensitive nature, we store user feedback transcripts for only 30 days.
+## 📋 Commands
 
-If you choose to send us feedback about Claude Code, such as transcripts of your usage, Anthropic may use that feedback to debug related issues and improve Claude Code's functionality (e.g., to reduce the risk of similar bugs occurring in the future).
+| Command | Description |
+|---------|-------------|
+| `ccg start` | Launch Claude Code with graph intelligence (auto-setup) |
+| `ccg doctor` | Check system health and dependencies |
+| `ccg status` | Show current graph and daemon status |
+| `ccg build` | Manually rebuild all graphs |
+| `ccg daemon start/stop` | Manage live graph update daemon |
+| `ccg init` | Initialize graphs in new project (manual setup) |
 
-### Privacy safeguards
+## 🔧 Advanced Setup
 
-We have implemented several safeguards to protect your data, including limited retention periods for sensitive information, restricted access to user session data, and clear policies against using feedback for model training.
+### Manual Workflow (if needed)
 
-For full details, please review our [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms) and [Privacy Policy](https://www.anthropic.com/legal/privacy).
+```bash
+# 1. Initialize in your project
+ccg init
+
+# 2. Check dependencies 
+ccg doctor
+
+# 3. Build graphs
+ccg build
+
+# 4. Start daemon for live updates
+ccg daemon start
+
+# 5. Launch Claude Code
+ccg start
+```
+
+### Dependencies
+
+**Required:**
+- Node.js 18+
+- Python 3.8+
+- madge (for JS/TS analysis)
+
+**Optional (improves analysis):**
+- tree-sitter-cli: `npm install -g tree-sitter-cli`
+- pyan3: `pip install pyan3`
+- Python packages: `pip install watchdog networkx psutil aiofiles`
+
+**Check with:** `ccg doctor`
+
+## 📊 Performance
+
+Claude Code Graph is optimized for large codebases:
+
+- **Smart Filtering**: Skips `node_modules`, build directories, etc.
+- **File Limits**: Processes up to 500 files for tree-sitter, 200 for C++, 50 for Python
+- **Incremental Updates**: Only processes changed files via daemon
+- **Caching**: Intelligent caching for faster subsequent runs
+
+For projects with 1000+ files, initial graph building takes 2-5 minutes instead of 30+ minutes.
+
+## 📁 Project Structure
+
+```
+your-project/
+├── .graph/                 # Graph data (auto-created)
+│   ├── js.json            # JavaScript/TypeScript modules  
+│   ├── py.dot             # Python call graph
+│   ├── cpp.json           # C++ dependencies
+│   ├── ts.json            # Tree-sitter AST
+│   ├── metrics.json       # Graph statistics
+│   └── daemon.lock        # Daemon status
+├── .gitignore             # Updated to exclude .graph/
+└── your code...
+```
+
+## 🛠️ Development
+
+```bash
+# Clone the repo
+git clone https://github.com/aibozo/claude-code.graph.git
+cd claude-code-graph
+
+# Install dependencies
+npm install
+
+# Build tools
+npm run build
+
+# Install globally for testing
+npm install -g .
+
+# Run tests
+npm test
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature-name`
+3. Make your changes and test thoroughly
+4. Submit a pull request
+
+## 📝 License
+
+MIT License - see [LICENSE.md](LICENSE.md) for details.
+
+## 🐛 Issues & Support
+
+- Report bugs: [GitHub Issues](https://github.com/aibozo/claude-code.graph/issues)
+- For Claude Code issues: Use `/bug` command or [Claude Code Issues](https://github.com/anthropics/claude-code/issues)
+
+## 🔗 Links
+
+- [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code/overview)
+- [Claude Code Repository](https://github.com/anthropics/claude-code)
+- [Anthropic Website](https://www.anthropic.com)
+
+---
+
+**Made with ❤️ for better AI-assisted coding**
